@@ -1,5 +1,5 @@
 # ldb
-A lightweight node.js REST API database implementation
+ldb is a lightweight node.js REST API database implementation
 
 ### Structure
 verb | path | arguments | description
