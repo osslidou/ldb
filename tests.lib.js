@@ -36,9 +36,8 @@ module.exports = function(hostname, port) {
         });
     }
 
-    module.newGuid = function() {
-        return this.shortId() + this.shortId() + '-' + this.shortId() + '-' + this.shortId() + '-' +
-            this.shortId() + '-' + this.shortId() + this.shortId() + this.shortId();
+    module.longId = function() {
+        return this.shortId() + '-' + this.shortId() + '-' + this.shortId();
     }
 
     module.shortId = function() {

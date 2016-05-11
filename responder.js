@@ -2,7 +2,7 @@ module.exports.responder = function(res) {
     var module = {};
 
     module.success = function(data) {
-        console.log('responding success...');
+        //console.log('responding success...');
 
         if (data)
             res.send(data);
@@ -13,7 +13,7 @@ module.exports.responder = function(res) {
     }
 
     module.error = function(err) {
-        console.log('responding error...');
+        //console.log('responding error...');
 
         if (err.status)
             res.status(err.status).json(err.message);

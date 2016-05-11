@@ -78,7 +78,7 @@ exports.start = function(port, dbManager) {
     });
 
     app.put('/:dbName', function(req) {
-        dbManager.databaseCreate(req.responder, req.dbName);
+        dbManager.databaseCreate(req.responder, req.dbName, req.body);
     });
 
     app.delete('/:dbName', function(req) {
@@ -90,7 +90,7 @@ exports.start = function(port, dbManager) {
     });
 
     app.put('/:dbName/:tableName', function(req) {
-        dbManager.tableCreate(req.responder, req.dbName, req.tableName);
+        dbManager.tableCreate(req.responder, req.dbName, req.tableName, req.body);
     });
 
     app.delete('/:dbName/:tableName', function(req) {
@@ -102,9 +102,7 @@ exports.start = function(port, dbManager) {
     });
 
     app.put('/:dbName/:tableName/:worker', function(req) {
-        var definition = {};
-        definition.type = req.query.type;
-        dbManager.workerCreate(req.responder, req.dbName, req.tableName, req.worker, definition);
+        dbManager.workerCreate(req.responder, req.dbName, req.tableName, req.worker, req.body);
     });
 
     app.delete('/:dbName/:tableName/:worker', function(req) {
@@ -120,169 +118,6 @@ exports.start = function(port, dbManager) {
     app.use(function(err, req, res, next) {
         req.responder.error(err);
     });
-
-
-    /*
-      
-        app.use('/:id*', function(req, res, next) {
-            // browserId middleware: 
-            // 1. gets and stores: browserId and its associated socket, 
-            // 2. creates the socketData object, 
-            // 3. stores res object to be later used by (ie responded) the websocket server
-            // 4. ensure that the browser socket exists
-     
-            if (req.method == "OPTIONS") { // deals with firefox
-                res.json('verb not supported')
-                return; // breaks the chain: do not call next()
-            }
-     
-            req.browserId = req.params.id;
-            req.socket = shared.socketsByBrowser[req.browserId];
-     
-            var socketData = req.body; // this will copy any extra field into the socket data - including body.value
-            req.socketData = socketData;
-            socketData.requestId = uuid.v1();
-            shared.pendingRequests[socketData.requestId] = res;
-     
-            socketData.params = [];
-            var decodedUri = url.parse(decodeURI(req.originalUrl));
-            if (decodedUri.query) {
-                var queryArgs = decodedUri.query.split('&');
-                socketData.cmd = queryArgs[0];
-                socketData.params = queryArgs.slice(1);
-            }
-     
-            var isBrowserCreation = req.method === 'PUT' && (!req.params[0]);
-            if (!isBrowserCreation) {
-                // then browser needs to exist with a connected socket
-                var message;
-                if (!req.socket)
-                    message = "Browser not found: " + req.browserId;;
-     
-                if (req.socket && !req.socket.connected)
-                    message = "Browser disconnected: " + req.browserId;
-     
-                if (message) {
-                    handleRequestError(req, 404, message);
-                    return;
-                }
-            }
-     
-            next();
-        });
-     
-        app.put('/:id', function(req) {
-            // creates a new browser instance
-            if (os.platform() != 'win32') {
-                // If you are using Google Chrome on Linux, update the command with the following first:
-                // google-chrome  --disable-web-security            
-                var message = "not supported OS: " + os.platform()
-                handleRequestError(req, 500, message);
-                return;
-            }
-     
-            if (req.query.type !== 'chrome') {
-                var message = "unsupported browser type: " + req.query.type;
-                handleRequestError(req, 415, message);
-                return;
-            }
-     
-            if (shared.socketsByBrowser[req.browserId]) {
-                var message = "browser " + req.browserId + " already running";
-                handleRequestError(req, 409, message);
-                return;
-            }
-     
-            var sessionDataPath = browserUserDataFolder + req.browserId;
-            var chromeExtensionPath = path.resolve(__dirname, 'chrome_extension');
-     
-            var spawn = childProcess.spawn;
-            var baseUrl = 'http://localhost:' + port + '/';
-            var startupArgs = ["--no-default-browser-check", "--no-first-run", "--test-type", "--ignore-certificate-errors", "--disable-popup-blocking", "--extensions-on-chrome-urls",
-                "--user-data-dir=" + sessionDataPath, "--load-extension=" + chromeExtensionPath,
-                "--user-agent='Chrome 43.|" + req.browserId + "|" + req.socketData.requestId + "|" + baseUrl + "|Chrome 43.'", // hack: pass startup param in useragent for easy retrieval from the extension
-                'about:blank'];
-     
-            if (req.query.maximized && req.query.maximized === "1")
-                startupArgs.unshift("--start-maximized");
-     
-            var browser = spawn(browserPath, startupArgs);
-     
-            console.log('[' + req.browserId + '] starting...');
-        });
-     
-        app.delete('/:id', function(req) {
-            // kills browser instance
-            var socketData = req.socketData;
-            socketData.cmd = "kill";
-     
-            logCommand(req.browserId, socketData);
-            req.socket.emit('cmd', socketData);
-     
-            delete shared.socketsByBrowser[req.browserId];
-        });
-     
-        app.use('/:id/url', function(req) {
-            // gets/sets the browser's url
-            var socketData = req.socketData;
-     
-            switch (req.method) {
-                case "GET": socketData.cmd = "get_url"; break;
-                case "PUT": socketData.cmd = "set_url"; break;
-            }
-     
-            logCommand(req.browserId, socketData);
-            req.socket.emit('cmd', socketData);
-        });
-     
-        app.use('/:id/tabs', function(req) {
-            // gets/sets the browser's url
-            var socketData = req.socketData;
-     
-            if (!socketData.cmd)
-                socketData.cmd = "get_tabs_info";
-     
-            logCommand(req.browserId, socketData);
-            req.socket.emit('cmd', socketData);
-        });
-     
-        app.use('/:id/page*', function(req) {
-            // interacts with the browser's html page
-            var timeOutInSeconds = req.headers["x-timeout-in-sec"];
-            var expiry = new Date();
-            if (timeOutInSeconds)
-                expiry.setTime(expiry.getTime() + timeOutInSeconds * 1000);
-     
-            var socketData = req.socketData;
-            socketData.requestExpiry = expiry.toString();
-     
-            var decodedUri = url.parse(decodeURI(req.originalUrl));
-     
-            if (req.params[0])
-                socketData.path = decodedUri.pathname.substring(decodedUri.pathname.indexOf(req.params[0]));
-            else
-                socketData.path = '';
-     
-            if (!socketData.cmd)
-                socketData.cmd = 'get'; // default value if nothing passed
-     
-            logCommand(req.browserId, socketData);
-            req.socket.emit('cmd', socketData);
-        });
-        
-        */
-
-    function logCommand(browserId, socketData) {
-        var logEntryText = '[' + browserId + '] ' + socketData.cmd;
-
-        if (socketData.path !== undefined)
-            logEntryText += ' ' + socketData.path;
-
-        if (socketData.value !== undefined)
-            logEntryText += ' { ' + util.inspect(socketData.value) + ' }';
-
-        console.log(logEntryText);
-    }
 
     function handleRequestError(req, code, message) {
         console.log("[" + code + "]", message, "\n");

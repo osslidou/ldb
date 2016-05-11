@@ -1,44 +1,90 @@
 var fs = require("fs");
 var all_dbs; // map[dbName, db]
 var path = require('path');
+var app_config;
 var dbManager = function() { };
 var appConfigFilePath;
 exports.dbManager = new dbManager();
 
-var DEFAULT_CONFIG = { "paths": [] }; // [c:\dev\db_1, c:\dev\db_2]
-var DEFAULT_DB = {};
+var DEFAULT_ROOT_CONFIG = { "db_root": "data" };
 
 dbManager.prototype.init = function(configFilePath) {
     appConfigFilePath = configFilePath;
-    try {
-        all_dbs = {};
+    all_dbs = {};
+    app_config = DEFAULT_ROOT_CONFIG;
 
+    try {
         var content = fs.readFileSync(appConfigFilePath);
-        var app_config = JSON.parse(content);
-        app_config.paths.forEach(function(entry) {
-            console.log('init: ', entry);
-            initSingleDbSync(entry);
-        });
+        app_config = JSON.parse(content);
     }
     catch (e) {
-        console.log("-- ERROR:\n", e);
-        // create empty file        
-        fs.writeFile(appConfigFilePath, JSON.stringify(DEFAULT_CONFIG));
+        if (e.code === 'ENOENT')
+            // write default config when no previous config found
+            fs.writeFileSync(configFilePath, JSON.stringify(app_config));
+        else
+            throw e;
     }
+
+    ensureFolderExistsSync(app_config.db_root);
+    initAllDbsSync(app_config.db_root);
+}
+
+function initAllDbsSync(db_root) {
+    getDirectories(db_root).forEach(function(entry) {
+        initSingleDbSync(entry);
+    });
 }
 
 function initSingleDbSync(dbPath) {
-    var dbConfigFile = path.resolve(dbPath, ".config");
-    var dbName = path.basename(dbPath);    
-    try {
-        var contents = fs.readFileSync(dbConfigFile);
-        var db = JSON.parse(contents);
-
-        // add to global all_dbs map
+    initSingleItem(dbPath, function(dbName, db) {
         all_dbs[dbName] = db;
+
+        getDirectories(dbPath).forEach(function(entry) {
+            initSingleTableSync(db, entry)
+        });
+
+        console.log(dbName + ' initialized.');
+    });
+}
+
+function initSingleTableSync(db, tablePath) {
+    initSingleItem(tablePath, function(tableName, table) {
+        db[tableName] = table;
+
+        getDirectories(tablePath).forEach(function(entry) {
+            initSingleWorkerSync(table, entry)
+        });
+    });
+}
+
+function initSingleWorkerSync(table, workerPath) {
+    initSingleItem(workerPath, function(workerName, worker) {
+        table[workerName] = worker;
+    });
+}
+
+function initSingleItem(itemPath, success) {
+    var configFile = path.resolve(itemPath, ".config");
+    var itemName = path.basename(itemPath);
+    try {
+
+        var textContents = fs.readFileSync(configFile);
+        var item = JSON.parse(textContents);
+        success(itemName, item);
     } catch (err) {
-        console.log('ERROR: Unable to open the file ' + dbConfigFile);
+        console.log('ERROR: Unable to open the file ' + configFile);
     }
+}
+
+function getDirectories(parentPath) {
+    var retVal = [];
+
+    fs.readdirSync(parentPath).filter(function(file) { return fs.statSync(path.join(parentPath, file)).isDirectory(); }
+    ).forEach(function(dirName) {
+        retVal.push(path.join(parentPath, dirName));
+    });
+
+    return retVal;
 }
 
 dbManager.prototype.clearCache = function(responder) {
@@ -55,63 +101,34 @@ dbManager.prototype.databaseList = function(responder) {
     responder.success(dbs);
 }
 
-dbManager.prototype.databaseCreate = function(responder, dbName, options) {
+dbManager.prototype.databaseCreate = function(responder, dbName, configuration) {
     throwIfDbExists(dbName);
 
-    addOrRemoveDatabaseFromAppConfigFile(dbName, true, function(err, folderPath) {
+    var folderPath = path.join(app_config.db_root, dbName);
+    ensureFolderExistsSync(folderPath);
+
+    var db = configuration;
+
+    var dbConfigFile = path.resolve(folderPath, ".config");
+    fs.writeFile(dbConfigFile, JSON.stringify(db), (err) => {
+
+        console.log('file written:' + dbConfigFile);
+
         if (err)
             return responder.error({ message: err.message });
 
-        var dbConfigFile = path.resolve(folderPath, ".config");
-        fs.writeFile(dbConfigFile, JSON.stringify(DEFAULT_DB), (err) => {
-            if (err)
-                return responder.error({ message: err.message });
-
-            all_dbs[dbName] = {};
-            responder.success();
-        });
+        all_dbs[dbName] = db;
+        responder.success();
     });
 }
 
 dbManager.prototype.databaseDrop = function(responder, dbName) {
     throwIfDbNotExists(dbName);
+    var folderPath = path.join(app_config.db_root, dbName);
 
-    addOrRemoveDatabaseFromAppConfigFile(dbName, false, function(err, folderPath) {
-        if (err)
-            return responder.error({ message: err.message });
-
-        delete all_dbs[dbName];
-        rmdirSync(folderPath);
-        responder.success();
-    })
-}
-
-function addOrRemoveDatabaseFromAppConfigFile(dbName, isAdd, callback) {
-    var folderPath = path.join('dbs', dbName);
-    ensureFolderExistsSync(folderPath);
-
-    fs.readFile(appConfigFilePath, (err, data) => {
-        if (err)
-            return callback(err);
-
-        var app_config = JSON.parse(data);
-
-        if (isAdd) {
-            app_config.paths.push(folderPath);
-        } else {
-            // delete
-            var index = app_config.paths.indexOf(folderPath);
-            if (index !== -1)
-                app_config.paths.splice(index, 1);
-        }
-
-        fs.writeFile(appConfigFilePath, JSON.stringify(app_config), (err) => {
-            if (err)
-                return callback(err);
-
-            callback(null, folderPath);
-        });
-    });
+    delete all_dbs[dbName];
+    rmdirSync(folderPath);
+    responder.success();
 }
 
 //-------------- Table
@@ -126,15 +143,15 @@ dbManager.prototype.tableList = function(responder, dbName) {
     responder.success(tables);
 }
 
-dbManager.prototype.tableCreate = function(responder, dbName, tableName, options) {
+dbManager.prototype.tableCreate = function(responder, dbName, tableName, configuration) {
     throwIfDbNotExists(dbName);
     var db = all_dbs[dbName];
     throwIfTableExists(db, tableName);
 
-    var table = {};
+    var table = configuration;
     db[tableName] = table;
 
-    var folderPath = path.join('dbs', dbName, tableName);
+    var folderPath = path.join(app_config.db_root, dbName, tableName);
     ensureFolderExistsSync(folderPath);
     var configFile = path.resolve(folderPath, ".config");
     fs.writeFile(configFile, JSON.stringify(table), (err) => {
@@ -151,7 +168,7 @@ dbManager.prototype.tableDrop = function(responder, dbName, tableName) {
     throwIfTableNotExists(db, tableName);
 
     delete db[tableName];
-    var folderPath = path.join('dbs', dbName, tableName);
+    var folderPath = path.join(app_config.db_root, dbName, tableName);
     rmdirSync(folderPath);
     responder.success();
 }
@@ -171,18 +188,21 @@ dbManager.prototype.workerList = function(responder, dbName, tableName) {
     responder.success(workers);
 }
 
-dbManager.prototype.workerCreate = function(responder, dbName, tableName, workerName, definition) {
+dbManager.prototype.workerCreate = function(responder, dbName, tableName, workerName, configuration) {
     throwIfDbNotExists(dbName);
     var db = all_dbs[dbName];
     throwIfTableNotExists(db, tableName);
 
-    var table = {};
-    db[tableName] = table;
+    var table = db[tableName];
+    throwIfWorkerExists(db, table, workerName);
 
-    var folderPath = path.join('dbs', dbName, tableName);
+    var worker = configuration;
+    table[workerName] = worker;
+
+    var folderPath = path.join(app_config.db_root, dbName, tableName, workerName);
     ensureFolderExistsSync(folderPath);
     var configFile = path.resolve(folderPath, ".config");
-    fs.writeFile(configFile, JSON.stringify(table), (err) => {
+    fs.writeFile(configFile, JSON.stringify(worker), (err) => {
         if (err)
             return responder.error({ message: err.message });
 
@@ -194,9 +214,11 @@ dbManager.prototype.workerDrop = function(responder, dbName, tableName, workerNa
     throwIfDbNotExists(dbName);
     var db = all_dbs[dbName];
     throwIfTableNotExists(db, tableName);
+    var table = db[tableName];
+    throwIfWorkeNotExists(db, table, workerName);
 
-    delete db[tableName];
-    var folderPath = path.join('dbs', dbName, tableName);
+    delete table[workerName];
+    var folderPath = path.join(app_config.db_root, dbName, tableName, workerName);
     rmdirSync(folderPath);
     responder.success();
 }
@@ -231,7 +253,6 @@ function throwIfDbExists(name) {
         throw ({ status: 409, message: 'Database ' + name + ' already exists' });
 }
 
-
 function throwIfDbNotExists(name) {
     if (!all_dbs.hasOwnProperty(name))
         throw ({ status: 404, message: 'Database ' + name + ' not found' });
@@ -247,7 +268,19 @@ function throwIfTableNotExists(db, name) {
         throw ({ status: 404, message: 'Table ' + name + ' not found' });
 }
 
+function throwIfWorkerExists(db, table, name) {
+    if (table.hasOwnProperty(name))
+        throw ({ status: 409, message: 'Worker ' + name + ' already exists' });
+}
+
+function throwIfWorkeNotExists(db, table, name) {
+    if (!table.hasOwnProperty(name))
+        throw ({ status: 404, message: 'Worker ' + name + ' not found' });
+}
+
 function ensureFolderExistsSync(localFolderPath) {
+    //console.log('ensureFolderExists: ' + localFolderPath);
+
     var mkdirSync = function(basePath) {
         try {
             fs.mkdirSync(basePath);
@@ -258,7 +291,7 @@ function ensureFolderExistsSync(localFolderPath) {
     }
 
     var parts = localFolderPath.split(path.sep);
-    for (var i = 2; i <= parts.length; i++) {
+    for (var i = 1; i <= parts.length; i++) {
         var basePath = path.join.apply(null, parts.slice(0, i));
         mkdirSync(basePath);
     }
