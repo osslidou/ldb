@@ -141,7 +141,7 @@ function* main() {
         
         // contents
         [PUT]   /db1/table1?cid=123&id=abc {name='BC Hydro'} create/update  -> {cid:123, id:abc, name:'BC Hydro'}
-        [POST]  /db1/table2  {cid=123, text='login at 1pm'} append only (not loading data file in memory) -> {cid:123, text:'login at 1pm'}
+        not required [POST]  /db1/table2  {cid=123, text='login at 1pm'} append only (not loading data file in memory) -> {cid:123, text:'login at 1pm'}
     
         [GET]   /db1/table1/view1?cid=123&count=10      returns list of items with view argument cid set to '123'    
         
