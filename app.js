@@ -4,7 +4,7 @@ const CONFIG_FILE_PATH = ".config";
 var dbManager = require('./db-manager.js').dbManager;
 var restServer = require('./server-rest.js');
 
-dbManager.init(CONFIG_FILE_PATH);
+dbManager.initialize(CONFIG_FILE_PATH);
 restServer.start(APP_PORT, dbManager);
 
 process.on('uncaughtException', function(err) {
